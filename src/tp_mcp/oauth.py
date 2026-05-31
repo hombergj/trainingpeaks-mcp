@@ -9,13 +9,11 @@ single-user deployment:
   3. /authorize                                — auto-approve, redirect with code
   4. /token                                    — exchange code for token
 
-No actual auth is enforced at the OAuth level. The MCP endpoint itself is
-protected by the optional MCP_API_KEY environment variable if set.
+No actual auth is enforced at the OAuth level.
 """
 
 from __future__ import annotations
 
-import os
 import secrets
 from urllib.parse import urlencode
 
@@ -23,40 +21,31 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-# CORS headers required so Claude.ai's browser can reach our endpoints
-_CORS_HEADERS = {
+_CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Protocol-Version",
 }
 
 
-def _base_url() -> str:
-    """Derive the server's public base URL.
+def _base_url(request: Request) -> str:
+    """Derive the public base URL from the incoming request.
 
-    Checks (in order):
-      RAILWAY_PUBLIC_DOMAIN  — set automatically by Railway
-      SERVER_URL             — manual override
-    Falls back to localhost for local dev.
+    Uses X-Forwarded-Proto / X-Forwarded-Host set by Railway's proxy so the
+    issuer URL is always the real public HTTPS URL, never localhost.
     """
-    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
-    if domain:
-        return f"https://{domain}"
-    return os.environ.get("SERVER_URL", "http://localhost:8080").rstrip("/")
-
-
-# In-memory code store — fine for a single-process personal server
-_pending_codes: dict[str, bool] = {}
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "localhost"
+    return f"{proto}://{host}"
 
 
 async def handle_preflight(request: Request) -> Response:
-    """Handle CORS preflight OPTIONS requests."""
-    return Response(status_code=204, headers=_CORS_HEADERS)
+    return Response(status_code=204, headers=_CORS)
 
 
 async def handle_metadata(request: Request) -> JSONResponse:
-    """RFC 8414 OAuth Authorization Server Metadata."""
-    base = _base_url()
+    """RFC 8414 Authorization Server Metadata."""
+    base = _base_url(request)
     return JSONResponse(
         {
             "issuer": base,
@@ -68,39 +57,43 @@ async def handle_metadata(request: Request) -> JSONResponse:
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none"],
         },
-        headers={**_CORS_HEADERS, "Cache-Control": "public, max-age=3600"},
+        headers={**_CORS, "Cache-Control": "no-store"},
     )
 
 
 async def handle_register(request: Request) -> JSONResponse:
-    """Dynamic client registration (RFC 7591) — accepts any client."""
-    # Note: if client_secret is omitted, client_secret_expires_at is not required.
-    # Setting token_endpoint_auth_method to "none" means no secret is needed.
+    """RFC 7591 Dynamic Client Registration — accepts any client."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Echo back redirect_uris if provided; otherwise empty list
+    redirect_uris = body.get("redirect_uris", [])
+
     return JSONResponse(
         {
             "client_id": "claude-mcp-client",
             "client_id_issued_at": 0,
+            "redirect_uris": redirect_uris,
             "grant_types": ["authorization_code"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
-            "redirect_uris": [],
         },
         status_code=201,
-        headers=_CORS_HEADERS,
+        headers=_CORS,
     )
 
 
 async def handle_authorize(request: Request) -> Response:
-    """Authorization endpoint — auto-approves and immediately redirects with a code."""
+    """Auto-approves every authorization request and redirects with a code."""
     redirect_uri = request.query_params.get("redirect_uri", "")
     state = request.query_params.get("state", "")
 
     if not redirect_uri:
-        return Response("Missing redirect_uri", status_code=400, headers=_CORS_HEADERS)
+        return Response("Missing redirect_uri", status_code=400, headers=_CORS)
 
     code = secrets.token_urlsafe(32)
-    _pending_codes[code] = True
-
     params: dict[str, str] = {"code": code}
     if state:
         params["state"] = state
@@ -108,33 +101,24 @@ async def handle_authorize(request: Request) -> Response:
     return RedirectResponse(
         url=f"{redirect_uri}?{urlencode(params)}",
         status_code=302,
-        headers=_CORS_HEADERS,
+        headers=_CORS,
     )
 
 
 async def handle_token(request: Request) -> JSONResponse:
-    """Token endpoint — accepts any code and returns a long-lived bearer token.
-
-    The token value is not validated by the MCP server since no MCP_API_KEY
-    is required. Access control is at the network layer (Railway URL obscurity)
-    or via MCP_API_KEY if configured.
-    """
+    """Issues a bearer token for any presented code."""
     return JSONResponse(
         {
             "access_token": secrets.token_urlsafe(32),
             "token_type": "Bearer",
-            "expires_in": 86400 * 365,  # 1 year
+            "expires_in": 86400 * 365,
         },
-        headers=_CORS_HEADERS,
+        headers=_CORS,
     )
 
 
 OAUTH_ROUTES: list[Route] = [
-    Route(
-        "/.well-known/oauth-authorization-server",
-        handle_metadata,
-        methods=["GET", "OPTIONS"],
-    ),
+    Route("/.well-known/oauth-authorization-server", handle_metadata, methods=["GET", "OPTIONS"]),
     Route("/register", handle_register, methods=["POST", "OPTIONS"]),
     Route("/authorize", handle_authorize, methods=["GET", "OPTIONS"]),
     Route("/token", handle_token, methods=["POST", "OPTIONS"]),
