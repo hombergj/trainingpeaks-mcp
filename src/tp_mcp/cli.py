@@ -155,7 +155,7 @@ def cmd_auth_clear() -> int:
 
 
 def cmd_serve() -> int:
-    """Start the MCP server.
+    """Start the MCP server (stdio transport).
 
     Returns:
         Exit code.
@@ -163,6 +163,19 @@ def cmd_serve() -> int:
     from tp_mcp.server import run_server
 
     return run_server()
+
+
+def cmd_serve_http(host: str = "0.0.0.0", port: int = 8080) -> int:
+    """Start the MCP server over HTTP (Streamable HTTP transport).
+
+    Reads TP_AUTH_COOKIE and optional MCP_API_KEY from environment.
+
+    Returns:
+        Exit code.
+    """
+    from tp_mcp.server_http import run_http_server
+
+    return run_http_server(host=host, port=port)
 
 
 def cmd_config() -> int:
@@ -210,13 +223,21 @@ def cmd_help() -> int:
     print("  auth-status           Check authentication status")
     print("  auth-clear            Clear stored cookie")
     print("  config                Output Claude Desktop config snippet")
-    print("  serve                 Start the MCP server")
+    print("  serve                 Start the MCP server (stdio transport)")
+    print("  serve-http            Start the MCP server over HTTP (Railway/remote deployment)")
+    print("    --host HOST         Bind host (default: 0.0.0.0)")
+    print("    --port PORT         Bind port (default: 8080)")
     print("  help                  Show this help message")
     print()
     print("Examples:")
     print("  tp-mcp auth                      # Manual cookie entry")
     print("  tp-mcp auth --from-browser auto  # Auto-detect browser")
-    print("  tp-mcp auth --from-browser chrome")
+    print("  tp-mcp serve-http --port 8080    # HTTP server for Railway")
+    print()
+    print("Environment variables for HTTP mode:")
+    print("  TP_AUTH_COOKIE   TrainingPeaks Production_tpAuth cookie (required)")
+    print("  MCP_API_KEY      Bearer token to protect the /mcp endpoint (recommended)")
+    print("  PORT             Override listen port (Railway sets this automatically)")
     print()
     return 0
 
@@ -244,6 +265,21 @@ def main() -> int:
                 print("Error: --from-browser requires a browser name (chrome, firefox, auto, etc.)")
                 return 1
         return cmd_auth(from_browser=from_browser)
+
+    if command == "serve-http":
+        import os
+        args = sys.argv[2:]
+        host = "0.0.0.0"
+        port = int(os.environ.get("PORT", "8080"))
+        if "--host" in args:
+            idx = args.index("--host")
+            if idx + 1 < len(args):
+                host = args[idx + 1]
+        if "--port" in args:
+            idx = args.index("--port")
+            if idx + 1 < len(args):
+                port = int(args[idx + 1])
+        return cmd_serve_http(host=host, port=port)
 
     commands = {
         "auth-status": cmd_auth_status,
