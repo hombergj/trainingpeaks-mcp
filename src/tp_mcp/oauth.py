@@ -23,7 +23,7 @@ from mcp.server.auth.provider import (
     RefreshToken,
     construct_redirect_uri,
 )
-from mcp.server.auth.routes import create_auth_routes
+from mcp.server.auth.routes import create_auth_routes, create_protected_resource_routes
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyHttpUrl
@@ -136,11 +136,21 @@ class SimpleAuthProvider(OAuthAuthorizationServerProvider):
 
 
 def build_oauth_routes(issuer_url: str) -> list[Route]:
-    """Create MCP SDK OAuth routes for the given issuer URL."""
+    """Create MCP SDK OAuth + Protected Resource Metadata routes."""
     provider = SimpleAuthProvider()
-    return create_auth_routes(
+
+    auth_routes = create_auth_routes(
         provider=provider,
         issuer_url=AnyHttpUrl(issuer_url),
-        client_registration_options=ClientRegistrationOptions(enabled=True, valid_scopes=[]),
+        client_registration_options=ClientRegistrationOptions(enabled=True),
         revocation_options=RevocationOptions(enabled=False),
     )
+
+    # RFC 9728: /.well-known/oauth-protected-resource/mcp
+    # Claude.ai fetches this to discover which auth server protects /mcp.
+    resource_routes = create_protected_resource_routes(
+        resource_url=AnyHttpUrl(f"{issuer_url}/mcp"),
+        authorization_servers=[AnyHttpUrl(issuer_url)],
+    )
+
+    return auth_routes + resource_routes
