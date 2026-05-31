@@ -58,6 +58,13 @@ class SimpleAuthProvider(OAuthAuthorizationServerProvider):
         return self._clients.get(client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # ClientAuthenticator raises "Unsupported auth method" if
+        # token_endpoint_auth_method is None. Normalize to "none" so the
+        # token endpoint works without a client secret.
+        if client_info.token_endpoint_auth_method is None:
+            client_info = client_info.model_copy(
+                update={"token_endpoint_auth_method": "none"}
+            )
         self._clients[client_info.client_id] = client_info
 
     # ------------------------------------------------------------------
