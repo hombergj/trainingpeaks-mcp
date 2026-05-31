@@ -34,6 +34,36 @@ logger = logging.getLogger("tp-mcp.http")
 
 
 # ---------------------------------------------------------------------------
+# Debug logging middleware — logs every request/response to Railway logs
+# ---------------------------------------------------------------------------
+
+class DebugLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Log the incoming request
+        body = b""
+        if request.method in ("POST", "PUT", "PATCH"):
+            body = await request.body()
+
+        logger.info(
+            ">>> %s %s | headers: %s | body: %s",
+            request.method,
+            request.url.path,
+            dict(request.headers),
+            body[:500].decode(errors="replace") if body else "",
+        )
+
+        response = await call_next(request)
+
+        logger.info(
+            "<<< %s %s → %s",
+            request.method,
+            request.url.path,
+            response.status_code,
+        )
+        return response
+
+
+# ---------------------------------------------------------------------------
 # Optional API-key middleware
 # ---------------------------------------------------------------------------
 
@@ -109,6 +139,9 @@ def create_app() -> Starlette:
             *oauth_routes,
         ],
     )
+
+    # Debug logging — remove once the OAuth flow is stable
+    app.add_middleware(DebugLoggingMiddleware)
 
     # CORS — required for Claude.ai browser to reach OAuth endpoints
     app.add_middleware(
