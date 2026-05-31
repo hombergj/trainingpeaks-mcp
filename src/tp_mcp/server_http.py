@@ -27,6 +27,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 # Import the shared server object (tools, handlers, etc. are already registered)
 from tp_mcp.server import server, _validate_auth_on_startup
+from tp_mcp.oauth import OAUTH_ROUTES
 
 logger = logging.getLogger("tp-mcp.http")
 
@@ -46,9 +47,17 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._api_key = api_key
 
+    # Paths that must be reachable without auth (OAuth discovery + health)
+    _PUBLIC_PATHS = {
+        "/",
+        "/.well-known/oauth-authorization-server",
+        "/register",
+        "/authorize",
+        "/token",
+    }
+
     async def dispatch(self, request: Request, call_next):
-        # Always allow health-check
-        if request.url.path == "/":
+        if request.url.path in self._PUBLIC_PATHS:
             return await call_next(request)
 
         auth = request.headers.get("Authorization", "")
@@ -92,6 +101,7 @@ def create_app() -> Starlette:
         routes=[
             Route("/", health),
             Mount("/mcp", app=handle_mcp),
+            *OAUTH_ROUTES,
         ],
     )
 
