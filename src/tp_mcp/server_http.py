@@ -28,7 +28,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 # Import the shared server object (tools, handlers, etc. are already registered)
 from tp_mcp.server import server, _validate_auth_on_startup
-from tp_mcp.oauth import OAUTH_ROUTES
+from tp_mcp.oauth import build_oauth_routes, get_issuer_url
 
 logger = logging.getLogger("tp-mcp.http")
 
@@ -77,6 +77,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 def create_app() -> Starlette:
     """Create and return the Starlette ASGI application."""
 
+    issuer_url = get_issuer_url()
+    logger.info("OAuth issuer URL: %s", issuer_url)
+    oauth_routes = build_oauth_routes(issuer_url)
+
     session_manager = StreamableHTTPSessionManager(
         app=server,
         stateless=False,
@@ -102,7 +106,7 @@ def create_app() -> Starlette:
         routes=[
             Route("/", health),
             Mount("/mcp", app=handle_mcp),
-            *OAUTH_ROUTES,
+            *oauth_routes,
         ],
     )
 
