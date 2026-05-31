@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 import uvicorn
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
@@ -103,6 +104,14 @@ def create_app() -> Starlette:
             Mount("/mcp", app=handle_mcp),
             *OAUTH_ROUTES,
         ],
+    )
+
+    # CORS — required for Claude.ai browser to reach OAuth endpoints
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
     )
 
     # Wrap with API-key middleware if configured
